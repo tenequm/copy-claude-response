@@ -333,7 +333,7 @@ if [ "$DEBUG_MODE" = true ]; then
     # Exit with code 2 to ensure stderr debug output is shown to user
     exit 2
 elif [ "$RESPONSE_NUM" -eq 1 ]; then
-    echo '{"decision": "block", "reason": "Latest Claude response copied to clipboard!"}'
+    echo '{"decision": "block", "reason": "✅ 最新回复已复制 Latest response copied!"}'
 else
-    echo '{"decision": "block", "reason": "Claude response #'"$RESPONSE_NUM"' copied to clipboard!"}'
+    echo '{"decision": "block", "reason": "✅ 回复 #'"$RESPONSE_NUM"' 已复制 Response #'"$RESPONSE_NUM"' copied!"}'
 fi
