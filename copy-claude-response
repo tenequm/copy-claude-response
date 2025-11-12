@@ -1,9 +1,24 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Constants
 PREVIEW_LENGTH=60
 MAX_RESPONSES=99999
 DEFAULT_LIST_COUNT=10
+
+# Check bash version (need 4.0+ for associative arrays)
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+    cat >&2 <<EOF
+Error: This script requires Bash 4.0 or higher (current: $BASH_VERSION)
+
+macOS users: Install via Homebrew:
+  brew install bash
+
+Then ensure it's in your PATH, or update the shebang to:
+  #!/opt/homebrew/bin/bash (Apple Silicon)
+  #!/usr/local/bin/bash (Intel)
+EOF
+    exit 1
+fi
 
 # Function to generate preview text for responses
 generate_preview() {
@@ -19,6 +34,20 @@ generate_preview() {
     echo "$preview"
 }
 
+# Function to convert timestamp to epoch (cross-platform)
+timestamp_to_epoch() {
+    local timestamp="$1"
+    # Try GNU date first (Linux, Windows/WSL, Homebrew coreutils)
+    if date -d "$timestamp" +%s >/dev/null 2>&1; then
+        date -d "$timestamp" +%s
+    # Try BSD date (macOS default)
+    elif date -j -f "%Y-%m-%dT%H:%M:%S" "$timestamp" +%s >/dev/null 2>&1; then
+        date -j -f "%Y-%m-%dT%H:%M:%S" "$(echo "$timestamp" | sed 's/\.[0-9]*Z$//')" +%s 2>/dev/null || echo "0"
+    else
+        echo "0"
+    fi
+}
+
 # Function to format timestamp as "time ago" display
 format_time_ago() {
     local timestamp="$1"
@@ -26,9 +55,12 @@ format_time_ago() {
     if [[ -n "$timestamp" ]]; then
         # Calculate time ago
         local now_epoch=$(date +%s)
-        local msg_epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo "$now_epoch")
+        local msg_epoch=$(timestamp_to_epoch "$timestamp")
+        if [[ "$msg_epoch" == "0" ]]; then
+            msg_epoch=$now_epoch
+        fi
         local diff_sec=$((now_epoch - msg_epoch))
-        
+
         if [[ $diff_sec -lt 60 ]]; then
             time_display=$(printf "[%4.1f sec ago]" "$diff_sec")
         elif [[ $diff_sec -lt 3600 ]]; then
@@ -45,6 +77,7 @@ format_time_ago() {
 # Function to copy text to clipboard (cross-platform)
 copy_to_clipboard() {
     local text="$1"
+
     if command -v pbcopy >/dev/null 2>&1; then
         # macOS - printf preserves UTF-8 better than echo
         printf '%s' "$text" | pbcopy
@@ -73,20 +106,34 @@ if [[ "$INPUT" =~ \"prompt\":[[:space:]]*\"([^\"]+)\" ]]; then
     PROMPT="${BASH_REMATCH[1]}"
 fi
 
-# Check if this is a copy-response command (with optional number, list, find, or debug)
-if [[ ! "$PROMPT" =~ ^/copy-response([[:space:]]+(list([[:space:]]+[0-9]+)?|find[[:space:]]+\"[^\"]+\"|debug([[:space:]]+[0-9]+)?|[0-9]+))?$ ]]; then
+# Check if this is a copy-response or c command (with optional arguments)
+# Support /copy-response, /copy, and /c as shortcuts
+if [[ ! "$PROMPT" =~ ^/(copy-response|copy|c)([[:space:]].*)?$ ]]; then
     exit 0  # Let other prompts proceed normally
 fi
 
+# Trim trailing whitespace from PROMPT for further processing
+PROMPT=$(echo "$PROMPT" | sed 's/[[:space:]]*$//')
+
 # Check if jq is installed (only needed when command matches)
 if ! command -v jq >/dev/null 2>&1; then
-    echo "Error: jq is not installed. Please install jq to use this script." >&2
+    cat >&2 <<EOF
+Error: jq is not installed. Please install jq to use this script.
+
+Installation:
+  macOS:    brew install jq
+  Linux:    sudo apt-get install jq / sudo yum install jq
+  Windows:  choco install jq
+EOF
     exit 2
 fi
 
 # Now we can safely use jq to parse the full input
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
 PROMPT=$(echo "$INPUT" | jq -r '.prompt')
+
+# Trim trailing whitespace again after jq parsing
+PROMPT=$(echo "$PROMPT" | sed 's/[[:space:]]*$//')
 
 # Parse the command
 LIST_MODE=false
@@ -96,23 +143,23 @@ SEARCH_TERM=""
 RESPONSE_NUM=1
 LIST_COUNT=$DEFAULT_LIST_COUNT
 
-if [[ "$PROMPT" =~ ^/copy-response[[:space:]]+list([[:space:]]+([0-9]+))?$ ]]; then
+if [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+list([[:space:]]+([0-9]+))?$ ]]; then
     LIST_MODE=true
-    if [ -n "${BASH_REMATCH[2]}" ]; then
-        LIST_COUNT=${BASH_REMATCH[2]}
+    if [ -n "${BASH_REMATCH[3]}" ]; then
+        LIST_COUNT=${BASH_REMATCH[3]}
     fi
-elif [[ "$PROMPT" =~ ^/copy-response[[:space:]]+find[[:space:]]+\"([^\"]+)\"$ ]]; then
+elif [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+find[[:space:]]+\"([^\"]+)\"$ ]]; then
     FIND_MODE=true
-    SEARCH_TERM="${BASH_REMATCH[1]}"
-elif [[ "$PROMPT" =~ ^/copy-response[[:space:]]+debug([[:space:]]+([0-9]+))?$ ]]; then
+    SEARCH_TERM="${BASH_REMATCH[2]}"
+elif [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+debug([[:space:]]+([0-9]+))?$ ]]; then
     DEBUG_MODE=true
     echo "DEBUG: Matched debug command" >&2
-    if [ -n "${BASH_REMATCH[2]}" ]; then
-        RESPONSE_NUM=${BASH_REMATCH[2]}
-        echo "DEBUG: Set response num to ${BASH_REMATCH[2]}" >&2
+    if [ -n "${BASH_REMATCH[3]}" ]; then
+        RESPONSE_NUM=${BASH_REMATCH[3]}
+        echo "DEBUG: Set response num to ${BASH_REMATCH[3]}" >&2
     fi
-elif [[ "$PROMPT" =~ ^/copy-response[[:space:]]+([0-9]+)$ ]]; then
-    RESPONSE_NUM=${BASH_REMATCH[1]}
+elif [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+([0-9]+)$ ]]; then
+    RESPONSE_NUM=${BASH_REMATCH[2]}
 fi
 
 if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
@@ -133,13 +180,13 @@ while read -r line; do
     if echo "$line" | jq -e '.message.role == "assistant"' >/dev/null 2>&1; then
         request_id=$(echo "$line" | jq -r '.requestId')
         content=$(echo "$line" | jq -r '.message.content[0].text // ""')
-        
+
         # If we haven't seen this requestId before, initialize it
         if [[ -z "${seen_requests[$request_id]}" ]]; then
             seen_requests["$request_id"]=1
             response_groups["$request_id"]=""
         fi
-        
+
         # Append content (processing in forward order)
         if [[ -n "$content" ]]; then
             if [[ -n "${response_groups[$request_id]}" ]]; then
@@ -154,13 +201,31 @@ while read -r line; do
     fi
 done < "$TRANSCRIPT_PATH"
 
+# Detect reverse-cat command (tac on Linux/WSL, gtac on macOS with coreutils)
+REVERSE_CAT="tac"
+if ! command -v tac >/dev/null 2>&1; then
+    if command -v gtac >/dev/null 2>&1; then
+        REVERSE_CAT="gtac"
+    else
+        cat >&2 <<EOF
+Error: Neither 'tac' nor 'gtac' command found.
+
+macOS users: Install via Homebrew:
+  brew install coreutils
+
+This will provide the 'gtac' command (GNU tac).
+EOF
+        exit 1
+    fi
+fi
+
 # Get request order (newest first) and timestamps by processing in reverse
 declare -A request_timestamps
 while read -r line; do
     if echo "$line" | jq -e '.message.role == "assistant"' >/dev/null 2>&1; then
         request_id=$(echo "$line" | jq -r '.requestId')
         timestamp=$(echo "$line" | jq -r '.timestamp // .message.timestamp // ""')
-        
+
         # Add to order if not already added and response has content
         if [[ ! " ${request_order[@]} " =~ " ${request_id} " ]]; then
             # Only add if the response group has actual content (not just whitespace/newlines)
@@ -172,7 +237,7 @@ while read -r line; do
             fi
         fi
     fi
-done < <(tac "$TRANSCRIPT_PATH")
+done < <($REVERSE_CAT "$TRANSCRIPT_PATH")
 
 # Build final responses array from grouped content (limit to MAX_RESPONSES)
 RESPONSES=()

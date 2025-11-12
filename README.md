@@ -1,19 +1,59 @@
 # Claude Code Response Copier
 
-A Claude Code hook that adds a `/copy-response` command to quickly copy Claude's responses to your clipboard.
+A Claude Code hook that adds `/c`, `/copy`, and `/copy-response` commands to quickly copy Claude's responses to your clipboard.
+
+📖 **[中文文档 Chinese Documentation](README.zh-CN.md)**
 
 ![Demo](img/demo.gif)
 
 ## Features
 
-- 📋 **Quick Copy**: `/copy-response` copies the latest response
-- 🔢 **Numbered Access**: `/copy-response 3` copies a specific response
-- 📝 **List Responses**: `/copy-response list` shows available responses with previews
-- 🔍 **Search Responses**: `/copy-response find "keyword"` finds responses containing text
+- 📋 **Quick Copy**: `/c` copies the latest response (also supports `/copy` and `/copy-response`)
+- 🔢 **Numbered Access**: `/c 3` copies a specific response
+- 📝 **List Responses**: `/c list` shows available responses with previews
+- 🔍 **Search Responses**: `/c find "keyword"` finds responses containing text
 - ⏰ **Timestamps**: Shows when each response was created
 - 🖥️ **Cross-Platform**: Works on macOS, Linux, and Windows/WSL
+- ⚡ **Short Alias**: Use `/c` for fastest access, or `/copy` or `/copy-response`
 
 ## Installation
+
+### Prerequisites
+
+**All Platforms:**
+- Bash 4.0+ (for associative arrays)
+- `jq` for JSON parsing
+- Platform-specific clipboard utility
+
+**macOS:**
+```bash
+# Install Bash 5.0+ (macOS default is 3.2)
+brew install bash
+
+# Install coreutils (provides gtac)
+brew install coreutils
+
+# Install jq
+brew install jq
+```
+
+**Linux:**
+```bash
+# Install xclip (for clipboard)
+sudo apt install xclip jq
+
+# Or for RPM-based systems
+sudo yum install xclip jq
+```
+
+**Windows/WSL:**
+```bash
+# Install jq
+sudo apt install jq
+# clip.exe is built-in
+```
+
+### Setup Steps
 
 1. **Download the script:**
 
@@ -38,7 +78,7 @@ A Claude Code hook that adds a `/copy-response` command to quickly copy Claude's
            "hooks": [
              {
                "type": "command",
-               "command": "/path/to/copy-claude-response"
+               "command": "~/.local/bin/copy-claude-response"
              }
            ]
          }
@@ -47,24 +87,44 @@ A Claude Code hook that adds a `/copy-response` command to quickly copy Claude's
    }
    ```
 
+4. **Create a slash command definition** (fixes "Unknown slash command" error):
+
+   Create file: `~/.claude/commands/c.md`
+
+   ```markdown
+   Copy Claude's responses to clipboard.
+
+   Usage:
+   - /c - copy latest response
+   - /c 2 - copy response #2
+   - /c list - list recent responses
+   - /c find "keyword" - search responses
+   ```
+
+   This enables Claude Code to recognize the `/c` command and trigger the hook.
+
+5. **Restart Claude Code**
+
 ## Usage
 
 ### Basic Commands
 
 | Command | Description |
 |---------|-------------|
-| `/copy-response` | Copy the latest Claude response |
-| `/copy-response 2` | Copy response #2 |
-| `/copy-response list` | List last 10 responses with previews |
-| `/copy-response list 5` | List last 5 responses |
-| `/copy-response find "error"` | Find responses containing "error" |
+| `/c` | Copy the latest Claude response |
+| `/c 2` | Copy response #2 |
+| `/c list` | List last 10 responses with previews |
+| `/c list 5` | List last 5 responses |
+| `/c find "error"` | Find responses containing "error" |
+
+> **Note:** Also supports longer forms `/copy` and `/copy-response`
 
 ### Examples
 
 **Copy latest response:**
 
 ```
-/copy-response
+/c
 ```
 
 > Latest Claude response copied to clipboard!
@@ -72,7 +132,7 @@ A Claude Code hook that adds a `/copy-response` command to quickly copy Claude's
 **List recent responses:**
 
 ```
-/copy-response list
+/c list
 ```
 
 ```
@@ -85,7 +145,7 @@ Available responses (1-3):
 **Search for specific content:**
 
 ```
-/copy-response find "git commit"
+/c find "git commit"
 ```
 
 ```
@@ -113,16 +173,42 @@ The script:
 
 ## Troubleshooting
 
+**"Unknown slash command: c" error?**
+
+- Create the slash command definition file: `~/.claude/commands/c.md` (see step 4 in Installation)
+- Restart Claude Code
+
 **Hook not working?**
 
 - Run `/hooks` in Claude Code to verify the hook is registered
-- Check that the script path is correct and executable
+- Check that the script path is correct and executable: `ls -l ~/.local/bin/copy-claude-response`
 - Use `claude --debug` to see hook execution details
+
+**"Error: This script requires Bash 4.0 or higher" (macOS)?**
+
+```bash
+# Install Bash 5.0+
+brew install bash
+
+# Option 1: Update PATH so new bash is found first
+echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# Option 2: Update script shebang to use specific bash
+# Edit first line to: #!/opt/homebrew/bin/bash
+```
+
+**"Error: Neither 'tac' nor 'gtac' command found" (macOS)?**
+
+```bash
+brew install coreutils
+```
 
 **Clipboard not working?**
 
 - **Linux**: Install xclip: `sudo apt install xclip`
 - **WSL**: Ensure Windows clipboard integration is enabled
+- **macOS**: pbcopy should work by default
 
 **No responses found?**
 
@@ -131,7 +217,9 @@ The script:
 
 **Hook not triggering?**
 
-- Do not create a custom slash command named `/copy-response` - this will prevent the hook from triggering
+- Ensure the slash command file exists at `~/.claude/commands/c.md`
+- The hook intercepts the command BEFORE Claude processes it
+- Check hook registration with `/hooks` command
 
 ## Limitations
 
@@ -143,9 +231,18 @@ The script:
 ## Requirements
 
 - Claude Code with hooks support
-- Bash shell
+- Bash 4.0+ (for associative arrays)
+  - macOS: Install via `brew install bash`
+  - Linux/WSL: Usually pre-installed
 - `jq` for JSON parsing
-- Platform-specific clipboard utility (pbcopy/xclip/clip.exe)
+  - macOS: `brew install jq`
+  - Linux: `sudo apt install jq`
+- Platform-specific clipboard utility:
+  - macOS: `pbcopy` (built-in)
+  - Linux: `xclip` (`sudo apt install xclip`)
+  - Windows/WSL: `clip.exe` (built-in)
+- GNU coreutils (macOS only):
+  - `brew install coreutils` (provides `gtac`)
 
 ## Contributing
 
