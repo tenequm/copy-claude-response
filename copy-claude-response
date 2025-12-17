@@ -20,6 +20,75 @@ EOF
     exit 1
 fi
 
+# Function to extract code blocks from markdown
+extract_code_blocks() {
+    local text="$1"
+    local blocks=""
+    local in_block=false
+    local current_block=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\`\`\` ]]; then
+            if [ "$in_block" = true ]; then
+                # End of code block
+                if [ -n "$blocks" ]; then
+                    blocks+=$'\n\n'
+                fi
+                blocks+="$current_block"
+                current_block=""
+                in_block=false
+            else
+                # Start of code block (skip the ```language line)
+                in_block=true
+            fi
+        elif [ "$in_block" = true ]; then
+            if [ -n "$current_block" ]; then
+                current_block+=$'\n'
+            fi
+            current_block+="$line"
+        fi
+    done <<< "$text"
+
+    printf '%s' "$blocks"
+}
+
+# Function to extract content between --- delimiters (for posts/tweets)
+extract_post_blocks() {
+    local text="$1"
+    local blocks=""
+    local in_block=false
+    local current_block=""
+
+    while IFS= read -r line; do
+        # Match lines that are just --- (with optional whitespace)
+        if [[ "$line" =~ ^[[:space:]]*---[[:space:]]*$ ]]; then
+            if [ "$in_block" = true ]; then
+                # End of post block
+                # Trim leading/trailing whitespace from block
+                current_block=$(printf '%s' "$current_block" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                if [ -n "$current_block" ]; then
+                    if [ -n "$blocks" ]; then
+                        blocks+=$'\n\n---\n\n'
+                    fi
+                    blocks+="$current_block"
+                fi
+                current_block=""
+                in_block=false
+            else
+                # Start of post block
+                in_block=true
+            fi
+        elif [ "$in_block" = true ]; then
+            if [ -n "$current_block" ]; then
+                current_block+=$'\n'
+            fi
+            current_block+="$line"
+        fi
+    done <<< "$text"
+
+    printf '%s' "$blocks"
+}
+
 # Function to generate preview text for responses
 generate_preview() {
     local response="$1"
@@ -139,11 +208,23 @@ PROMPT=$(echo "$PROMPT" | sed 's/[[:space:]]*$//')
 LIST_MODE=false
 FIND_MODE=false
 DEBUG_MODE=false
+CODE_MODE=false
+POST_MODE=false
 SEARCH_TERM=""
 RESPONSE_NUM=1
 LIST_COUNT=$DEFAULT_LIST_COUNT
 
-if [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+list([[:space:]]+([0-9]+))?$ ]]; then
+if [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+code([[:space:]]+([0-9]+))?$ ]]; then
+    CODE_MODE=true
+    if [ -n "${BASH_REMATCH[3]}" ]; then
+        RESPONSE_NUM=${BASH_REMATCH[3]}
+    fi
+elif [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+post([[:space:]]+([0-9]+))?$ ]]; then
+    POST_MODE=true
+    if [ -n "${BASH_REMATCH[3]}" ]; then
+        RESPONSE_NUM=${BASH_REMATCH[3]}
+    fi
+elif [[ "$PROMPT" =~ ^/(copy-response|copy|c)[[:space:]]+list([[:space:]]+([0-9]+))?$ ]]; then
     LIST_MODE=true
     if [ -n "${BASH_REMATCH[3]}" ]; then
         LIST_COUNT=${BASH_REMATCH[3]}
@@ -310,6 +391,43 @@ fi
 # Get the selected response (adjust for 0-based indexing)
 SELECTED_RESPONSE="${RESPONSES[$((RESPONSE_NUM-1))]}"
 
+# Handle code mode - extract only code blocks
+if [ "$CODE_MODE" = true ]; then
+    CODE_BLOCKS=$(extract_code_blocks "$SELECTED_RESPONSE")
+    if [ -z "$CODE_BLOCKS" ]; then
+        echo "No code blocks found in response #$RESPONSE_NUM" >&2
+        exit 2
+    fi
+    copy_to_clipboard "$CODE_BLOCKS"
+    BLOCK_COUNT=$(printf '%s' "$SELECTED_RESPONSE" | grep -c '```')
+    BLOCK_COUNT=$((BLOCK_COUNT / 2))
+    if [ "$BLOCK_COUNT" -eq 1 ]; then
+        echo '{"decision": "block", "reason": "✅ Code block copied!"}'
+    else
+        echo '{"decision": "block", "reason": "✅ '"$BLOCK_COUNT"' code blocks copied!"}'
+    fi
+    exit 0
+fi
+
+# Handle post mode - extract content between --- delimiters
+if [ "$POST_MODE" = true ]; then
+    POST_BLOCKS=$(extract_post_blocks "$SELECTED_RESPONSE")
+    if [ -z "$POST_BLOCKS" ]; then
+        echo "No post blocks (--- delimited) found in response #$RESPONSE_NUM" >&2
+        exit 2
+    fi
+    copy_to_clipboard "$POST_BLOCKS"
+    # Count --- pairs
+    BLOCK_COUNT=$(printf '%s' "$SELECTED_RESPONSE" | grep -c '^[[:space:]]*---[[:space:]]*$')
+    BLOCK_COUNT=$((BLOCK_COUNT / 2))
+    if [ "$BLOCK_COUNT" -eq 1 ]; then
+        echo '{"decision": "block", "reason": "✅ Post copied!"}'
+    else
+        echo '{"decision": "block", "reason": "✅ '"$BLOCK_COUNT"' posts copied!"}'
+    fi
+    exit 0
+fi
+
 # Handle debug mode
 if [ "$DEBUG_MODE" = true ]; then
     echo "=== DEBUG MODE ===" >&2
@@ -333,7 +451,7 @@ if [ "$DEBUG_MODE" = true ]; then
     # Exit with code 2 to ensure stderr debug output is shown to user
     exit 2
 elif [ "$RESPONSE_NUM" -eq 1 ]; then
-    echo '{"decision": "block", "reason": "✅ 最新回复已复制 Latest response copied!"}'
+    echo '{"decision": "block", "reason": "✅ Latest response copied!"}'
 else
-    echo '{"decision": "block", "reason": "✅ 回复 #'"$RESPONSE_NUM"' 已复制 Response #'"$RESPONSE_NUM"' copied!"}'
+    echo '{"decision": "block", "reason": "✅ Response #'"$RESPONSE_NUM"' copied!"}'
 fi
